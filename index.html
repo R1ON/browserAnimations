@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Какая-то хрень</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: black;
+        overflow: hidden;
+        color: #e8ebff;
+      }
+      svg {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+      }
+
+      .line {
+        stroke: white;
+        stroke-width: 1;
+        stroke-linecap: round;
+      }
+
+      .glow {
+        stroke: white;
+        stroke-width: 3;
+        filter: blur(0.5px);
+        opacity: 0.8;
+        transition: opacity 0.2s ease;
+        animation: pulse 1.5s ease infinite;
+      }
+
+      @keyframes pulse {
+        0%   { opacity: 0.5; }
+        50%  { opacity: 0.8; }
+        100% { opacity: 0.5; }
+      }
+
+      video {
+        object-fit: cover;
+        width: 100vw;
+        height: 100vh;
+        mix-blend-mode: lighten;
+      }
+    </style>
+  </head>
+  <body>
+
+    <svg id="stage" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <g id="lines"></g>
+    </svg>
+
+    <video src="back.mp4" autoplay muted loop playsinline
+          style="position:fixed; inset:0; width:100%; height:100%; object-fit:cover; mix-blend-mode:screen;">
+    </video>
+
+    <video src="main.mp4" autoplay muted loop playsinline
+          style="position:fixed; inset:0; width:100%; height:100%; object-fit:cover;">
+    </video>
+
+  
+    <script>
+      const PREFIX = 'kakieToYroki';
+      const KEY_DATA_PREFIX = `${PREFIX}:data:`;
+      const KEY_ANNOUNCE   = `${PREFIX}:announce`;
+      
+      const others = new Map();
+
+      const id = crypto.randomUUID();
+      let myCenter = { cx: 0, cy: 0 };
+
+      const svg  = document.getElementById('stage');
+      const g    = document.getElementById('lines');
+
+      function computeMyCenterOnScreen() {
+        const sx = window.screenX;
+        const sy = window.screenY;
+        const cx = sx + window.outerWidth  / 2;
+        const cy = sy + window.outerHeight / 2;
+        return { cx, cy };
+      }
+
+      function redrawLines() {
+        const sx = 50;
+        const sy = 50;
+
+        others.forEach((other) => {
+          const dx = other.cx - myCenter.cx;
+          const dy = other.cy - myCenter.cy;
+
+          const x2 = sx + (dx / window.innerWidth) * 100;
+          const y2 = sy + (dy / window.innerHeight) * 100;
+
+          let line = other.line;
+          
+          if (!other.line) {
+            line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('class', 'line');
+            g.appendChild(line);
+            other.line = line;
+          }
+
+          line.setAttribute('x1', sx);
+          line.setAttribute('y1', sy);
+          line.setAttribute('x2', x2);
+          line.setAttribute('y2', y2);
+
+          let glow = other.glow;
+          
+          if (!other.glow) {
+            glow = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            glow.setAttribute('class', 'glow');
+            g.appendChild(glow);
+            other.glow = glow;
+          }
+
+          glow.setAttribute('x1', sx);
+          glow.setAttribute('y1', sy);
+          glow.setAttribute('x2', x2);
+          glow.setAttribute('y2', y2);
+        });
+      }
+
+      function publishSelf() {
+        const payload = JSON.stringify({ id, cx: myCenter.cx, cy: myCenter.cy });
+        localStorage.setItem(KEY_DATA_PREFIX + id, payload);
+      }
+
+      function announceSelf() {
+        localStorage.setItem(KEY_ANNOUNCE, id);
+        publishSelf();
+      }
+
+
+      function frame() {
+        const newCenter = computeMyCenterOnScreen();
+        const moved = (Math.abs(newCenter.cx - myCenter.cx) > 0.1) ||
+                      (Math.abs(newCenter.cy - myCenter.cy) > 0.1);
+
+        if (moved) {
+          myCenter = newCenter;
+          publishSelf();
+          redrawLines();
+        }
+
+        requestAnimationFrame(frame);
+      }
+
+      function updateOthers(fromId, data) {
+        if (fromId === id) return;
+
+        let item = others.get(fromId);
+        if (!item) {
+          item = { cx: data.cx, cy: data.cy, line: null, glow: null };
+          others.set(fromId, item);
+        } else {
+          item.cx = data.cx;
+          item.cy = data.cy;
+        }
+      }
+
+      function removeOther(otherId) {
+        const item = others.get(otherId);
+        if (item) {
+          if (item.line) item.line.remove();
+          if (item.glow) item.glow.remove();
+          others.delete(otherId);
+        }
+      }
+
+      function setInitialOthers() {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+
+          if (k && k.startsWith(KEY_DATA_PREFIX)) {
+            const data = JSON.parse(localStorage.getItem(k));
+            if (data && data.id !== id) {
+              updateOthers(data.id, data);
+            }
+          }
+        }
+
+        redrawLines();
+      }
+      
+      window.addEventListener('resize', redrawLines);
+
+      window.addEventListener('beforeunload', () => {
+        localStorage.removeItem(KEY_DATA_PREFIX + id);
+      });
+
+      window.addEventListener('storage', (ev) => {
+        const { key, newValue } = ev;
+        if (!key) return;
+
+        if (key.startsWith(KEY_DATA_PREFIX)) {
+          if (!newValue) {
+            const otherId = key.slice(KEY_DATA_PREFIX.length);
+            removeOther(otherId);
+            redrawLines();
+            return;
+          }
+
+          const data = JSON.parse(newValue);
+          updateOthers(data.id, data);
+          redrawLines();
+        }
+      });
+
+      myCenter = computeMyCenterOnScreen();
+      setInitialOthers();
+      announceSelf();
+      redrawLines();
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
